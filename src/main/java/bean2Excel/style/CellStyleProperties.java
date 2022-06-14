@@ -8,6 +8,8 @@ import java.lang.annotation.Target;
 @Target({ElementType.FIELD})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface CellStyleProperties {
+    boolean autoFit() default true;
+
     Class<? extends CellStylePropertiesProvider>[] headerCellStyle() default { DefaultCellStyleProperties.class };
     Class<? extends CellStylePropertiesProvider>[] cellStyle() default { DefaultCellStyleProperties.class };
 }

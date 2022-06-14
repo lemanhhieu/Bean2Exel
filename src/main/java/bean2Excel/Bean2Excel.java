@@ -5,8 +5,11 @@ import lombok.NonNull;
 import lombok.val;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellUtil;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 import static bean2Excel.BeanInfo.*;
 
@@ -19,13 +22,27 @@ public class Bean2Excel {
             @NonNull String sheetName
         );
     }
+    private record ProcessedFieldInfo(
+        @NotNull FieldInfo fieldInfo,
+        @NotNull Integer columnIndex,
+        @NotNull ValueConverter valueConverter,
+        @Nullable StylePropertiesSetter styleSetter
+
+    ){}
+    private record StylePropertiesSetter(
+        @NotNull Consumer<Cell> headerStylePropertiesSetter,
+        @NotNull Consumer<Cell> cellStylePropertiesSetter
+    ) {}
+
     private record StyleProviders(
         List<? extends CellStylePropertiesProvider> headerStyleProviders,
         List<? extends CellStylePropertiesProvider> cellStyleProviders
     ){}
 
     private static final Map<Class<?>, CreateSheetFunc<?>> cache = new Hashtable<>();
-
+    public static void clearCache() {
+        cache.clear();
+    }
     public static <T> CreateSheetFunc<T> getCreateSheetFunc(Class<T> objectType) {
         // try to use cache
         val cachedResult = cache.get(objectType);
@@ -34,11 +51,94 @@ public class Bean2Excel {
         }
 
         ExcelObjectInfo excelObjectInfo = getExcelInfoFromBeans(objectType);
+        Map<String, ProcessedFieldInfo> processedInfo = processFieldsInfo(excelObjectInfo);
 
-        // build style providers map for each column
-        Map<String, StyleProviders> styleProvidersList = new HashMap<>();
+        CreateSheetFunc<T> createSheetFunc = (objectList, workbook, sheetName) ->{
+            Sheet sheet = workbook.createSheet(sheetName);
+            CellStyle generalStyle = null;
+            if (excelObjectInfo.generalStyle() != null){
+                generalStyle = getNoArgsInstance(excelObjectInfo.generalStyle().cellStyle()).getCellStyle(workbook);
+            }
 
-        for (BeanInfo.FieldInfo fieldInfo : excelObjectInfo.fieldInfoList()) {
+            // create header row
+            Row headerRow = sheet.createRow(0);
+            for (val processed : processedInfo.entrySet()) {
+                Cell headerCell = headerRow.createCell(processed.getValue().columnIndex());
+                headerCell.setCellStyle(generalStyle);
+                if (processed.getValue().styleSetter() != null) {
+                    processed.getValue().styleSetter().headerStylePropertiesSetter().accept(headerCell);
+                }
+                headerCell.setCellValue(processed.getKey());
+            }
+
+            // create data rows
+            int rowIndex = 1;
+            for (val rowObject : objectList) {
+                Row curRow = sheet.createRow(rowIndex);
+
+                for (val processed : processedInfo.entrySet()) {
+                    Cell cell = curRow.createCell(processed.getValue().columnIndex());
+
+                    // set style
+                    cell.setCellStyle(generalStyle);
+                    if (processed.getValue().styleSetter() != null) {
+                        processed.getValue().styleSetter().cellStylePropertiesSetter().accept(cell);
+                    }
+
+                    // set value
+                    val cellValue = processed.getValue()
+                        .valueConverter()
+                        .convert(processed.getValue().fieldInfo().getter().exec(rowObject));
+
+                    if (cellValue == null) {
+                        cell.setBlank();
+                    } else {
+                        switch (processed.getValue().fieldInfo().columnInfo().cellType()) {
+                            case STRING -> cell.setCellValue((String) cellValue);
+                            case BOOLEAN -> cell.setCellValue((Boolean) cellValue);
+                            case NUMERIC -> cell.setCellValue((Double) cellValue);
+                            case BLANK -> cell.setBlank();
+                            default -> throw new Bean2ExcelException(
+                                String.format("Unsupported excel type \"%s\"",
+                                    processed.getValue().fieldInfo().columnInfo().cellType())
+                            );
+                        }
+                    }
+                }
+                rowIndex++;
+            }
+
+            // autofit column
+            for (val processed : processedInfo.entrySet()) {
+                if (processed.getValue().fieldInfo().cellStyleProperties() != null
+                    && processed.getValue().fieldInfo().cellStyleProperties().autoFit()
+                ) {
+                    sheet.autoSizeColumn(processed.getValue().columnIndex());
+                }
+            }
+
+            return sheet;
+        };
+
+        cache.put(objectType, createSheetFunc);
+        return createSheetFunc;
+    }
+
+    private static Map<String, ProcessedFieldInfo> processFieldsInfo(ExcelObjectInfo excelObjectInfo) {
+        Map<String, ProcessedFieldInfo> processedInfo = new HashMap<>();
+
+        int columnIndex = 0;
+        for (FieldInfo fieldInfo : excelObjectInfo.fieldInfoList()) {
+
+            if (processedInfo.containsKey(fieldInfo.columnInfo().columnName())) {
+                throw new Bean2ExcelException(
+                    String.format("Duplicate column name \"%s\"",
+                        fieldInfo.columnInfo().columnName())
+                );
+            }
+
+            StylePropertiesSetter styleSetter = null;
+
             if (fieldInfo.cellStyleProperties() != null) {
                 val headerStyleProviders =
                     Arrays
@@ -49,97 +149,22 @@ public class Bean2Excel {
                     Arrays.stream(fieldInfo.cellStyleProperties().cellStyle())
                         .map(Bean2Excel::getNoArgsInstance)
                         .toList();
-                styleProvidersList.put(
-                    fieldInfo.columnInfo().columnName(),
-                    new StyleProviders(headerStyleProviders, cellStyleProviders)
+
+                styleSetter = new StylePropertiesSetter(
+                    (cell) -> CellUtil.setCellStyleProperties(cell, mergePropertiesMap(headerStyleProviders, cell)),
+                    (cell) -> CellUtil.setCellStyleProperties(cell, mergePropertiesMap(cellStyleProviders, cell))
                 );
             }
-        }
+            val valueConverter = getNoArgsInstance(fieldInfo.columnInfo().valueConverter());
 
-        // build column index map
-        int columnIndex = 0;
-        Map<String, Integer> columnIndexMap = new HashMap<>();
-        for (FieldInfo fieldInfo : excelObjectInfo.fieldInfoList()) {
-
-            if (columnIndexMap.containsKey(fieldInfo.columnInfo().columnName())) {
-                throw new Bean2ExcelException(
-                    String.format("Duplicate column name \"%s\"",
-                        fieldInfo.columnInfo().columnName())
-                );
-            }
-            columnIndexMap.put(fieldInfo.columnInfo().columnName(), columnIndex);
+            processedInfo.put(
+                fieldInfo.columnInfo().columnName(),
+                new ProcessedFieldInfo(fieldInfo, columnIndex, valueConverter, styleSetter)
+            );
             columnIndex++;
         }
 
-        CreateSheetFunc<T> createSheetFunc = (objectList, workbook, sheetName) -> {
-            Sheet sheet = workbook.createSheet(sheetName);
-            CellStyle generalStyle = null;
-            if (excelObjectInfo.generalStyle() != null){
-                generalStyle = getNoArgsInstance(excelObjectInfo.generalStyle().cellStyle()).getCellStyle(workbook);
-            }
-            // create header row
-            Row headerRow = sheet.createRow(0);
-            for (BeanInfo.FieldInfo fieldInfo : excelObjectInfo.fieldInfoList()) {
-                Cell cell = headerRow.createCell(columnIndexMap.get(fieldInfo.columnInfo().columnName()));
-
-                cell.setCellStyle(generalStyle);
-                if (styleProvidersList.containsKey(fieldInfo.columnInfo().columnName())) {
-                    val styleProviders = styleProvidersList
-                        .get(fieldInfo.columnInfo().columnName())
-                        .headerStyleProviders();
-                    CellUtil.setCellStyleProperties(cell, mergePropertiesMap(styleProviders, cell));
-                }
-
-                cell.setCellValue(fieldInfo.columnInfo().columnName());
-            }
-
-            // create data rows
-            int rowIndex = 1;
-            for (val rowObject : objectList) {
-                Row curRow = sheet.createRow(rowIndex);
-                for (BeanInfo.FieldInfo fieldInfo : excelObjectInfo.fieldInfoList()) {
-                    Cell cell = curRow.createCell(columnIndexMap.get(fieldInfo.columnInfo().columnName()));
-
-                    cell.setCellStyle(generalStyle);
-                    if (styleProvidersList.containsKey(fieldInfo.columnInfo().columnName())) {
-                        val styleProviders = styleProvidersList
-                            .get(fieldInfo.columnInfo().columnName())
-                            .cellStyleProviders();
-                        CellUtil.setCellStyleProperties(cell, mergePropertiesMap(styleProviders, cell));
-                    }
-
-
-                    val valueConverter = getNoArgsInstance(fieldInfo.columnInfo().valueConverter());
-                    val cellValue = valueConverter.convert(fieldInfo.getter().exec(rowObject));
-
-                    if (cellValue == null) {
-                        cell.setBlank();
-                    }
-                    else {
-                        switch (fieldInfo.columnInfo().cellType()) {
-                            case STRING -> cell.setCellValue((String) cellValue);
-                            case BOOLEAN -> cell.setCellValue((Boolean) cellValue);
-                            case NUMERIC -> cell.setCellValue((Double) cellValue);
-                            case BLANK -> cell.setBlank();
-                            default -> throw new Bean2ExcelException(
-                                String.format("Unsupported excel type \"%s\"", fieldInfo.columnInfo().cellType())
-                            );
-                        }
-                    }
-                }
-                rowIndex++;
-            }
-
-            for (BeanInfo.FieldInfo fieldInfo : excelObjectInfo.fieldInfoList()) {
-                if (fieldInfo.columnInfo().autoFit()) {
-                    sheet.autoSizeColumn(columnIndexMap.get(fieldInfo.columnInfo().columnName()));
-                }
-            }
-            return sheet;
-        };
-
-        cache.put(objectType, createSheetFunc);
-        return createSheetFunc;
+        return processedInfo;
     }
 
     private static Map<String, Object> mergePropertiesMap(

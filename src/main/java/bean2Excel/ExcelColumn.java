@@ -14,6 +14,5 @@ public @interface ExcelColumn {
     String columnName();
     CellType cellType();
     int order() default 0;
-    boolean autoFit() default true;
     Class<? extends ValueConverter> valueConverter() default IdentityValueConverter.class;
 }
