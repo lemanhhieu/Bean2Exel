@@ -115,27 +115,24 @@ public class Bean2ExcelTest {
         return out.toString();
     }
 
-    @Test
-    void testSpeed() throws Exception {
-
-        Bean2Excel.clearCache();
-
-        try (Workbook workbook = new XSSFWorkbook()) {
-
-            long nonCacheSpeed = TestUtil.measureSpeed("create sheet non cached", ()->{
-                Bean2Excel.getCreateSheetFunc(ClassA.class).exec(List.of(testData), workbook, "My sheet");
-            });
-            workbook.removeSheetAt(0);
-            long cachedSpeed = TestUtil.measureSpeed("create sheet cached", ()->{
-                Bean2Excel.getCreateSheetFunc(ClassA.class).exec(List.of(testData), workbook, "My sheet");
-            });
-            workbook.removeSheetAt(0);
-
-            TestUtil.measureSpeed("create sheet cached (another)", ()->{
-                Bean2Excel.getCreateSheetFunc(ClassA.class).exec(List.of(testData), workbook, "My sheet");
-            });
-
-            assertTrue(nonCacheSpeed > cachedSpeed);
-        }
-    }
+//    @Test
+//    void testSpeed() throws Exception {
+//
+//        Bean2Excel.clearCache();
+//
+//        try (Workbook workbook = new XSSFWorkbook()) {
+//
+//            long nonCacheSpeed = TestUtil.measureSpeed("create sheet non cached", ()->{
+//                Bean2Excel.getCreateSheetFunc(ClassA.class).exec(List.of(testData), workbook, "My sheet");
+//            });
+//            workbook.removeSheetAt(0);
+//            long cachedSpeed = TestUtil.measureSpeed("create sheet cached", ()->{
+//                Bean2Excel.getCreateSheetFunc(ClassA.class).exec(List.of(testData), workbook, "My sheet");
+//            });
+//            workbook.removeSheetAt(0);
+//
+//
+//            assertTrue(nonCacheSpeed > cachedSpeed);
+//        }
+//    }
 }
