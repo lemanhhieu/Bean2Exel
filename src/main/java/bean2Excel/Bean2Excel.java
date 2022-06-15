@@ -1,3 +1,28 @@
+/*
+ * MIT License
+ *
+ * Copyright (c) 2022 Le Manh Hieu
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
+ */
+
 package bean2Excel;
 
 import bean2Excel.style.CellStylePropertiesProvider;
@@ -14,8 +39,17 @@ import java.util.function.Consumer;
 import static bean2Excel.BeanInfo.*;
 
 public class Bean2Excel {
+
     @FunctionalInterface
     public interface CreateSheetFunc<T> {
+        /**
+         * Create an Excel sheet from a list of Java Beans objects. Each object is the data of a row.
+         * @param objectList a list of Java Beans objects
+         * @param workbook the workbook used to create Excel sheet
+         * @param sheetName name of the sheet to be created
+         * @return the created sheet
+         * @throws Bean2ExcelException a runtime exception indicating that a declaration or usage is invalid.
+         */
         Sheet exec(
             @NonNull List<T> objectList,
             @NonNull Workbook workbook,
@@ -29,20 +63,29 @@ public class Bean2Excel {
         @Nullable StylePropertiesSetter styleSetter
 
     ){}
+
     private record StylePropertiesSetter(
         @NotNull Consumer<Cell> headerStylePropertiesSetter,
         @NotNull Consumer<Cell> cellStylePropertiesSetter
     ) {}
 
-    private record StyleProviders(
-        List<? extends CellStylePropertiesProvider> headerStyleProviders,
-        List<? extends CellStylePropertiesProvider> cellStyleProviders
-    ){}
-
     private static final Map<Class<?>, CreateSheetFunc<?>> cache = new Hashtable<>();
+
+    /**
+     * Clear cache. Intended to be used only for testing purpose
+     */
     public static void clearCache() {
         cache.clear();
     }
+
+    /**
+     * Use to get a function to create Excel sheet.
+     * <br/>
+     * See {@link CreateSheetFunc#exec(List, Workbook, String)}.
+     * @param objectType Type of object to be used as java beans
+     * @return A function to create Excel sheet
+     * @throws Bean2ExcelException a runtime exception indicating that a declaration or usage is invalid.
+     */
     public static <T> CreateSheetFunc<T> getCreateSheetFunc(Class<T> objectType) {
         // try to use cache
         val cachedResult = cache.get(objectType);
